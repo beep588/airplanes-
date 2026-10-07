@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Skyfire: Vector Dogfight</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
+    <style>
+        * { box-sizing: border-box; user-select: none; }
+        body {
+            margin: 0;
+            background: #040814;
+            color: #38bdf8;
+            font-family: 'Consolas', 'Segoe UI', monospace;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+        }
+
+        #briefing {
+            background: rgba(10, 18, 38, 0.96);
+            border: 2px solid #0284c7;
+            border-radius: 12px;
+            padding: 30px;
+            width: 580px;
+            text-align: center;
+            box-shadow: 0 0 40px rgba(2, 132, 199, 0.35);
+        }
+
+        h1 { margin: 0 0 6px; font-size: 26px; letter-spacing: 3px; color: #f0f9ff; text-transform: uppercase; }
+        .subtitle { color: #94a3b8; font-size: 13px; margin-bottom: 20px; }
+
+        .manual {
+            background: #020b18;
+            border: 1px solid #1e293b;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 22px;
+            text-align: left;
+            font-size: 13px;
+            line-height: 1.6;
+            color: #cbd5e1;
+        }
+
+        .manual b { color: #38bdf8; }
+        .manual .p1-tag { color: #38bdf8; font-weight: bold; }
+        .manual .p2-tag { color: #f43f5e; font-weight: bold; }
+
+        .btn-row { display: flex; gap: 14px; }
+        button {
+            flex: 1;
+            padding: 14px;
+            font-size: 15px;
+            font-weight: bold;
+            letter-spacing: 1.5px;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+            text-transform: uppercase;
+            transition: 0.15s;
+        }
+
+        .btn-host { background: #0284c7; color: #fff; }
+        .btn-host:hover { background: #0369a1; }
+        .btn-join { background: #10b981; color: #fff; }
+        .btn-join:hover { background: #059669; }
+
+        .status-txt {
+            margin-top: 14px;
+            font-size: 13px;
+            color: #fbbf24;
+            min-height: 18px;
+        }
+
+        #gameArea {
+            display: none;
+            position: relative;
+            width: 1000px;
+            height: 640px;
+        }
+
+        canvas {
+            background: #020712;
+            border: 2px solid #0369a1;
+            border-radius: 8px;
+            box-shadow: 0 0 45px rgba(3, 105, 161, 0.45);
+        }
+
+        .hud {
+            position: absolute;
+            top: 12px;
+            left: 18px;
+            right: 18px;
+            display: flex;
+            justify-content: space-between;
+            font-weight: bold;
+            font-size: 14px;
+            pointer-events: none;
+        }
+
+        .hud-p1 { color: #38bdf8; }
+        .hud-p2 { color: #f43f5e; }
+    </style>
+</head>
+<body>
+
+<div id="briefing">
+    <h1>Skyfire: Dogfight</h1>
+    <div class="subtitle">Direct Link Combat Module</div>
+
+    <div class="manual">
+        <div><b>MISSION BRIEFING & CONTROLS:</b></div>
+        • <span class="p1-tag">Host (Player 1 - Blue):</span> Controls via <b>W</b> (Thrust), <b>A/D</b> (Turn), <b>SPACE</b> (20mm Guns)<br>
+        • <span class="p2-tag">Wingman (Player 2 - Red):</span> Controls via <b>W/UP</b> (Thrust), <b>A/D or LEFT/RIGHT</b>, <b>SPACE/ENTER</b> (Guns)<br>
+        • <b>Connection:</b> Click Host on Computer 1. Click Join on Computer 2. No room codes needed.
+    </div>
+
+    <div class="btn-row">
+        <button class="btn-host" id="hostBtn" onclick="startHost()">Host Match (P1)</button>
+        <button class="btn-join" id="joinBtn" onclick="startJoin()">Join Wingman (P2)</button>
+    </div>
+    <div class="status-txt" id="statusMsg">Ready for takeoff. Select role above.</div>
+</div>
+
+<div id="gameArea">
+    <div class="hud">
+        <div class="hud-p1">P1 [BLUE]: <span id="p1Score">0</span> | HULL: <span id="p1Hp">100</span>%</div>
+        <div style="color: #64748b;">RADAR ACTIVE - 60 FPS DIRECT LINK</div>
+        <div class="hud-p2">P2 [RED]: <span id="p2Score">0</span> | HULL: <span id="p2Hp">100</span>%</div>
+    </div>
+    <canvas id="cv" width="1000" height="640"></canvas>
+</div>
+
+<script>
+const FIXED_PEER_ID = 'kai-skyfire-dogfight-v1';
+let peer = null;
+let conn = null;
+let isHost = false;
+let gameRunning = false;
+
+const canvas = document.getElementById('cv');
+const ctx = canvas.getContext('2d');
+
+const state = {
+    p1: { x: 180, y: 320, a: 0, vx: 0, vy: 0, hp: 100, score: 0 },
+    p2: { x: 820, y: 320, a: Math.PI, vx: 0, vy: 0, hp: 100, score: 0 },
+    bullets: []
+};
+
+const keys = {};
+window.addEventListener('keydown', e => { keys[e.code] = true; });
+window.addEventListener('keyup', e => { keys[e.code] = false; });
+
+function peerOpts() {
+    return {
+        debug: 1,
+        config: {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:global.stun.twilio.com:3478' }
+            ]
+        }
+    };
+}
+
+function startHost() {
+    document.getElementById('statusMsg').innerText = "Establishing direct channel as Host...";
+    if (peer) peer.destroy();
+
+    peer = new Peer(FIXED_PEER_ID, peerOpts());
+
+    peer.on('open', () => {
+        isHost = true;
+        document.getElementById('statusMsg').innerText = "Host online! Have your sister click Join on her computer.";
+    });
+
+    peer.on('connection', c => {
+        conn = c;
+        bindConnection();
+    });
+
+    peer.on('error', err => {
+        console.error(err);
+        document.getElementById('statusMsg').innerText = "Channel active elsewhere. Refreshing link...";
+        setTimeout(startHost, 1000);
+    });
+}
+
+function startJoin() {
+    document.getElementById('statusMsg').innerText = "Linking to Host...";
+    if (peer) peer.destroy();
+
+    peer = new Peer(peerOpts());
+
+    peer.on('open', () => {
+        conn = peer.connect(FIXED_PEER_ID, { reliable: true });
+        bindConnection();
+    });
+
+    peer.on('error', err => {
+        console.error(err);
+        document.getElementById('statusMsg').innerText = "Unable to reach Host. Ensure Host clicked Host Match first.";
+    });
+}
+
+function bindConnection() {
+    conn.on('open', () => {
+        document.getElementById('briefing').style.display = 'none';
+        document.getElementById('gameArea').style.display = 'block';
+        gameRunning = true;
+
+        if (isHost) {
+            setInterval(hostTick, 1000 / 60);
+        } else {
+            setInterval(clientTick, 1000 / 60);
+        }
+
+        conn.on('data', data => {
+            if (isHost) {
+                applyInputs(state.p2, data);
+            } else {
+                Object.assign(state, data);
+                updateHud();
+            }
+        });
+
+        requestAnimationFrame(render);
+    });
+
+    conn.on('close', () => {
+        alert("Combat link lost.");
+        location.reload();
+    });
+}
+
+function applyInputs(plane, inp) {
+    if (inp.left) plane.a -= 0.07;
+    if (inp.right) plane.a += 0.07;
+    if (inp.thrust) {
+        plane.vx += Math.cos(plane.a) * 0.23;
+        plane.vy += Math.sin(plane.a) * 0.23;
+    }
+    plane.fire = inp.fire;
+}
+
+function clientTick() {
+    if (!conn || !conn.open) return;
+    conn.send({
+        thrust: keys['KeyW'] || keys['ArrowUp'],
+        left: keys['KeyA'] || keys['ArrowLeft'],
+        right: keys['KeyD'] || keys['ArrowRight'],
+        fire: keys['Space'] || keys['Enter']
+    });
+}
+
+function hostTick() {
+    applyInputs(state.p1, {
+        thrust: keys['KeyW'] || keys['ArrowUp'],
+        left: keys['KeyA'] || keys['ArrowLeft'],
+        right: keys['KeyD'] || keys['ArrowRight'],
+        fire: keys['Space'] || keys['Enter']
+    });
+
+    [state.p1, state.p2].forEach((p, idx) => {
+        p.vx *= 0.985;
+        p.vy *= 0.985;
+        p.x += p.vx;
+        p.y += p.vy;
+
+        if (p.x < 20) { p.x = 20; p.vx *= -0.5; }
+        if (p.x > 980) { p.x = 980; p.vx *= -0.5; }
+        if (p.y < 20) { p.y = 20; p.vy *= -0.5; }
+        if (p.y > 620) { p.y = 620; p.vy *= -0.5; }
+
+        p.cd = (p.cd || 0) - 1;
+        if (p.fire && p.cd <= 0) {
+            state.bullets.push({
+                x: p.x + Math.cos(p.a) * 18,
+                y: p.y + Math.sin(p.a) * 18,
+                vx: Math.cos(p.a) * 11 + p.vx * 0.5,
+                vy: Math.sin(p.a) * 11 + p.vy * 0.5,
+                owner: idx + 1,
+                life: 65
+            });
+            p.cd = 14;
+        }
+    });
+
+    for (let i = state.bullets.length - 1; i >= 0; i--) {
+        const b = state.bullets[i];
+        b.x += b.vx;
+        b.y += b.vy;
+        b.life--;
+
+        const target = b.owner === 1 ? state.p2 : state.p1;
+        if (Math.hypot(b.x - target.x, b.y - target.y) < 16) {
+            target.hp -= 10;
+            state.bullets.splice(i, 1);
+            if (target.hp <= 0) {
+                if (b.owner === 1) state.p1.score++; else state.p2.score++;
+                state.p1.hp = 100; state.p2.hp = 100;
+                state.p1.x = 180; state.p1.y = 320; state.p1.vx = 0; state.p1.vy = 0;
+                state.p2.x = 820; state.p2.y = 320; state.p2.vx = 0; state.p2.vy = 0;
+            }
+            continue;
+        }
+
+        if (b.life <= 0) state.bullets.splice(i, 1);
+    }
+
+    updateHud();
+
+    if (conn && conn.open) {
+        conn.send({
+            p1: state.p1,
+            p2: state.p2,
+            bullets: state.bullets
+        });
+    }
+}
+
+function updateHud() {
+    document.getElementById('p1Score').innerText = state.p1.score;
+    document.getElementById('p2Score').innerText = state.p2.score;
+    document.getElementById('p1Hp').innerText = Math.max(0, state.p1.hp);
+    document.getElementById('p2Hp').innerText = Math.max(0, state.p2.hp);
+}
+
+function drawJet(x, y, angle, color) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(angle);
+    ctx.fillStyle = color;
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 1.5;
+
+    ctx.beginPath();
+    ctx.moveTo(18, 0);
+    ctx.lineTo(-14, 12);
+    ctx.lineTo(-8, 0);
+    ctx.lineTo(-14, -12);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = '#020b18';
+    ctx.beginPath();
+    ctx.ellipse(2, 0, 6, 2.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+}
+
+function render() {
+    if (!gameRunning) return;
+
+    ctx.fillStyle = '#020712';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.strokeStyle = 'rgba(2, 132, 199, 0.08)';
+    ctx.lineWidth = 1;
+    for (let x = 0; x < canvas.width; x += 40) {
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+    }
+    for (let y = 0; y < canvas.height; y += 40) {
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+    }
+
+    ctx.fillStyle = '#fde047';
+    state.bullets.forEach(b => {
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+    });
+
+    drawJet(state.p1.x, state.p1.y, state.p1.a, '#0284c7');
+    drawJet(state.p2.x, state.p2.y, state.p2.a, '#f43f5e');
+
+    requestAnimationFrame(render);
+}
+</script>
+</body>
+</html>
