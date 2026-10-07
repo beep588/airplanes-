@@ -24,21 +24,21 @@
             background: rgba(10, 18, 38, 0.96);
             border: 2px solid #0284c7;
             border-radius: 12px;
-            padding: 30px;
-            width: 580px;
+            padding: 28px;
+            width: 620px;
             text-align: center;
             box-shadow: 0 0 40px rgba(2, 132, 199, 0.35);
         }
 
         h1 { margin: 0 0 6px; font-size: 26px; letter-spacing: 3px; color: #f0f9ff; text-transform: uppercase; }
-        .subtitle { color: #94a3b8; font-size: 13px; margin-bottom: 20px; }
+        .subtitle { color: #94a3b8; font-size: 13px; margin-bottom: 18px; }
 
         .manual {
             background: #020b18;
             border: 1px solid #1e293b;
             border-radius: 8px;
             padding: 16px;
-            margin-bottom: 22px;
+            margin-bottom: 20px;
             text-align: left;
             font-size: 13px;
             line-height: 1.6;
@@ -46,16 +46,17 @@
         }
 
         .manual b { color: #38bdf8; }
+        .manual .solo-tag { color: #f59e0b; font-weight: bold; }
         .manual .p1-tag { color: #38bdf8; font-weight: bold; }
         .manual .p2-tag { color: #f43f5e; font-weight: bold; }
 
-        .btn-row { display: flex; gap: 14px; }
+        .btn-row { display: flex; gap: 10px; }
         button {
             flex: 1;
-            padding: 14px;
-            font-size: 15px;
+            padding: 14px 10px;
+            font-size: 13px;
             font-weight: bold;
-            letter-spacing: 1.5px;
+            letter-spacing: 1px;
             border-radius: 6px;
             border: none;
             cursor: pointer;
@@ -63,6 +64,8 @@
             transition: 0.15s;
         }
 
+        .btn-solo { background: #d97706; color: #fff; }
+        .btn-solo:hover { background: #b45309; }
         .btn-host { background: #0284c7; color: #fff; }
         .btn-host:hover { background: #0369a1; }
         .btn-join { background: #10b981; color: #fff; }
@@ -109,27 +112,29 @@
 
 <div id="briefing">
     <h1>Skyfire: Dogfight</h1>
-    <div class="subtitle">Direct Link Combat Module</div>
+    <div class="subtitle">Tactical Air Combat Simulator</div>
 
     <div class="manual">
-        <div><b>MISSION BRIEFING & CONTROLS:</b></div>
-        • <span class="p1-tag">Host (Player 1 - Blue):</span> Controls via <b>W</b> (Thrust), <b>A/D</b> (Turn), <b>SPACE</b> (20mm Guns)<br>
-        • <span class="p2-tag">Wingman (Player 2 - Red):</span> Controls via <b>W/UP</b> (Thrust), <b>A/D or LEFT/RIGHT</b>, <b>SPACE/ENTER</b> (Guns)<br>
-        • <b>Connection:</b> Click Host on Computer 1. Click Join on Computer 2. No room codes needed.
+        <div><b>FLIGHT MANUAL & CONTROLS:</b></div>
+        • <span class="solo-tag">1-Player Mode:</span> Fly against an automated AI interceptor drone.<br>
+        • <span class="p1-tag">Player 1 (Blue):</span> <b>W</b> (Thrust), <b>A/D</b> (Turn), <b>SPACE</b> (20mm Cannon)<br>
+        • <span class="p2-tag">Player 2 (Red):</span> <b>UP/W</b> (Thrust), <b>LEFT/RIGHT or A/D</b>, <b>ENTER/SPACE</b> (Guns)<br>
+        • <b>Aerodynamics:</b> Vector inertia model with edge collision dampening.
     </div>
 
     <div class="btn-row">
+        <button class="btn-solo" onclick="startSolo()">Solo vs AI</button>
         <button class="btn-host" id="hostBtn" onclick="startHost()">Host Match (P1)</button>
         <button class="btn-join" id="joinBtn" onclick="startJoin()">Join Wingman (P2)</button>
     </div>
-    <div class="status-txt" id="statusMsg">Ready for takeoff. Select role above.</div>
+    <div class="status-txt" id="statusMsg">Select mode to scramble aircraft.</div>
 </div>
 
 <div id="gameArea">
     <div class="hud">
         <div class="hud-p1">P1 [BLUE]: <span id="p1Score">0</span> | HULL: <span id="p1Hp">100</span>%</div>
-        <div style="color: #64748b;">RADAR ACTIVE - 60 FPS DIRECT LINK</div>
-        <div class="hud-p2">P2 [RED]: <span id="p2Score">0</span> | HULL: <span id="p2Hp">100</span>%</div>
+        <div id="modeStatus" style="color: #64748b;">RADAR SCANNING</div>
+        <div class="hud-p2"><span id="p2Label">TARGET</span> [RED]: <span id="p2Score">0</span> | HULL: <span id="p2Hp">100</span>%</div>
     </div>
     <canvas id="cv" width="1000" height="640"></canvas>
 </div>
@@ -139,6 +144,7 @@ const FIXED_PEER_ID = 'kai-skyfire-dogfight-v1';
 let peer = null;
 let conn = null;
 let isHost = false;
+let isSolo = false;
 let gameRunning = false;
 
 const canvas = document.getElementById('cv');
@@ -166,15 +172,28 @@ function peerOpts() {
     };
 }
 
+function startSolo() {
+    isSolo = true;
+    isHost = true;
+    document.getElementById('briefing').style.display = 'none';
+    document.getElementById('gameArea').style.display = 'block';
+    document.getElementById('modeStatus').innerText = "SOLO COMBAT vs AI DRONE";
+    document.getElementById('p2Label').innerText = "AI DRONE";
+    gameRunning = true;
+    setInterval(hostTick, 1000 / 60);
+    requestAnimationFrame(render);
+}
+
 function startHost() {
-    document.getElementById('statusMsg').innerText = "Establishing direct channel as Host...";
+    isSolo = false;
+    document.getElementById('statusMsg').innerText = "Establishing network host link...";
     if (peer) peer.destroy();
 
     peer = new Peer(FIXED_PEER_ID, peerOpts());
 
     peer.on('open', () => {
         isHost = true;
-        document.getElementById('statusMsg').innerText = "Host online! Have your sister click Join on her computer.";
+        document.getElementById('statusMsg').innerText = "Host online! Have player 2 click Join Wingman.";
     });
 
     peer.on('connection', c => {
@@ -184,12 +203,13 @@ function startHost() {
 
     peer.on('error', err => {
         console.error(err);
-        document.getElementById('statusMsg').innerText = "Channel active elsewhere. Refreshing link...";
+        document.getElementById('statusMsg').innerText = "Channel occupied. Reconnecting...";
         setTimeout(startHost, 1000);
     });
 }
 
 function startJoin() {
+    isSolo = false;
     document.getElementById('statusMsg').innerText = "Linking to Host...";
     if (peer) peer.destroy();
 
@@ -202,7 +222,7 @@ function startJoin() {
 
     peer.on('error', err => {
         console.error(err);
-        document.getElementById('statusMsg').innerText = "Unable to reach Host. Ensure Host clicked Host Match first.";
+        document.getElementById('statusMsg').innerText = "Host not found. Ensure Host clicked Host Match first.";
     });
 }
 
@@ -210,6 +230,7 @@ function bindConnection() {
     conn.on('open', () => {
         document.getElementById('briefing').style.display = 'none';
         document.getElementById('gameArea').style.display = 'block';
+        document.getElementById('modeStatus').innerText = "DIRECT P2P LINK ACTIVE";
         gameRunning = true;
 
         if (isHost) {
@@ -231,7 +252,7 @@ function bindConnection() {
     });
 
     conn.on('close', () => {
-        alert("Combat link lost.");
+        alert("Wingman disconnected.");
         location.reload();
     });
 }
@@ -246,6 +267,29 @@ function applyInputs(plane, inp) {
     plane.fire = inp.fire;
 }
 
+function updateAI() {
+    const ai = state.p2;
+    const target = state.p1;
+
+    // Calculate relative bearing to player
+    const targetAngle = Math.atan2(target.y - ai.y, target.x - ai.x);
+    let diff = targetAngle - ai.a;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+
+    // AI flight steering
+    if (diff > 0.08) ai.a += 0.055;
+    else if (diff < -0.08) ai.a -= 0.055;
+
+    // Maintain pursuit thrust
+    ai.vx += Math.cos(ai.a) * 0.18;
+    ai.vy += Math.sin(ai.a) * 0.18;
+
+    // Fire cannon when lined up within 25 degrees
+    const dist = Math.hypot(target.x - ai.x, target.y - ai.y);
+    ai.fire = Math.abs(diff) < 0.42 && dist < 520;
+}
+
 function clientTick() {
     if (!conn || !conn.open) return;
     conn.send({
@@ -257,12 +301,17 @@ function clientTick() {
 }
 
 function hostTick() {
+    // Player 1 inputs
     applyInputs(state.p1, {
         thrust: keys['KeyW'] || keys['ArrowUp'],
         left: keys['KeyA'] || keys['ArrowLeft'],
         right: keys['KeyD'] || keys['ArrowRight'],
         fire: keys['Space'] || keys['Enter']
     });
+
+    if (isSolo) {
+        updateAI();
+    }
 
     [state.p1, state.p2].forEach((p, idx) => {
         p.vx *= 0.985;
@@ -285,7 +334,7 @@ function hostTick() {
                 owner: idx + 1,
                 life: 65
             });
-            p.cd = 14;
+            p.cd = (idx === 1 && isSolo) ? 18 : 14;
         }
     });
 
@@ -313,7 +362,7 @@ function hostTick() {
 
     updateHud();
 
-    if (conn && conn.open) {
+    if (!isSolo && conn && conn.open) {
         conn.send({
             p1: state.p1,
             p2: state.p2,
